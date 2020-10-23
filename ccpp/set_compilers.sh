@@ -39,6 +39,13 @@ case "$MACHINE_ID" in
             export F77=mpiifort
             export F90=mpiifort
             ;;
+        s4.intel)
+            export CC=mpiicc
+            export CXX=mpiicpc
+            export FC=mpiifort
+            export F77=mpiifort
+            export F90=mpiifort
+            ;;
         orion.intel)
             export CC=mpiicc
             export CXX=mpiicpc
