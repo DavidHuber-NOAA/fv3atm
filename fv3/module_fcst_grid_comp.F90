@@ -1425,6 +1425,31 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
       call update_atmos_model_state (Atmos, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__, file=__FILE__)) return
 
+      !--- DIAGNOSTIC: write out a full restart set immediately after the
+      !--- FIRST time step. In phase_2 Atmos%Time has already been advanced
+      !--- by update_atmos_model_state, so the elapsed integration time
+      !--- equals one dynamics time step (dt_atmos) at the end of step 1.
+      !--- Files are written to RESTART/step1_<validtime>.* using the same
+      !--- mechanism as the intermediate restarts below.
+      call get_time(Atmos%Time - Atmos%Time_init, seconds)
+      if (seconds == dt_atmos) then
+          if (mype == 0) write(*,*)'fcst_run_phase_2: dumping restart after first time step, seconds=',seconds
+          timestamp = 'step1_'//date_to_string(Atmos%Time)
+          call atmos_model_restart(Atmos, timestamp)
+          call write_stoch_restart_atm('RESTART/'//trim(timestamp)//'.atm_stoch.res.nc')
+          if (.not. quilting_restart .and. mpp_pe() == mpp_root_pe()) then
+              call get_date (Atmos%Time, date(1), date(2), date(3), date(4), date(5), date(6))
+              open( newunit=unit, file='RESTART/'//trim(timestamp)//'.coupler.res' )
+              write( unit, '(i6,8x,a)' )calendar_type, &
+                   '(Calendar: no_calendar=0, thirty_day_months=1, julian=2, gregorian=3, noleap=4)'
+              write( unit, '(6i6,8x,a)' )date_init, &
+                   'Model start time:   year, month, day, hour, minute, second'
+              write( unit, '(6i6,8x,a)' )date, &
+                   'Current model time: year, month, day, hour, minute, second'
+              close( unit )
+          endif
+      endif
+
       !--- DIAGNOSTIC DUMP #1b: model state at the analysis valid time
       !--- (forecast hour 0) after the IAU increments have been applied up
       !--- to and including the centre of the IAU window. This is the point
