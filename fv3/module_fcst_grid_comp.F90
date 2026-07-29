@@ -34,6 +34,7 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
                                 update_atmos_radiation_physics,            &
                                 update_atmos_model_state,                  &
                                 atmos_data_type, atmos_model_restart,      &
+                                atmos_model_dump_state,                    &
                                 atmos_model_exchange_phase_1,              &
                                 atmos_model_exchange_phase_2,              &
                                 addLsmask2grid, atmos_model_get_nth_domain_info
@@ -572,6 +573,7 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
     character(len=80) :: dateS
 
     character(256)                         :: gridfile
+    character(len=64)                      :: diag_timestamp
 
     character(8) :: bundle_grid
 
@@ -783,6 +785,18 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
             call mpp_error ( FATAL, 'fcst_initialize: RESTART subdirectory does not exist in the run directory' )
          endif
       endif
+!
+!-----------------------------------------------------------------------
+!*** DIAGNOSTIC DUMP #1a: model state immediately after the initial
+!*** ingest of all input data (netCDF restarts / ICs), i.e. before any
+!*** time integration or IAU forcing. For an IAU forecast this is the
+!*** model start time (forecast hour -iau_offset, e.g. fhr -3). Files are
+!*** written to RESTART/ingest_<validtime>.* via the direct FMS path.
+!-----------------------------------------------------------------------
+      diag_timestamp = 'ingest_'//date_to_string(Atmos%Time)
+      if (mype == 0) write(*,*)'fcst_initialize: dumping initial ingested state to RESTART/', &
+                               trim(diag_timestamp),'.*'
+      call atmos_model_dump_state(Atmos, trim(diag_timestamp))
 !
 !-----------------------------------------------------------------------
 !*** create grid for output fields, using FV3 parameters
@@ -1410,6 +1424,17 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
 
       call update_atmos_model_state (Atmos, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__, file=__FILE__)) return
+
+      !--- DIAGNOSTIC DUMP #1b: model state at the analysis valid time
+      !--- (forecast hour 0) after the IAU increments have been applied up
+      !--- to and including the centre of the IAU window. This is the point
+      !--- the model reaches an elapsed integration time equal to iau_offset
+      !--- hours. Files -> RESTART/postiau_<validtime>.* via direct FMS path.
+      call get_time(Atmos%Time - Atmos%Time_init, seconds)
+      if (nint(Atmos%iau_offset*3600.) > 0 .and. seconds == nint(Atmos%iau_offset*3600.)) then
+          if (mype == 0) write(*,*)'fcst_run_phase_2: dumping post-IAU (fhr 0) state at seconds=',seconds
+          call atmos_model_dump_state(Atmos, 'postiau_'//date_to_string(Atmos%Time))
+      endif
 
       !--- intermediate restart
       call get_time(Atmos%Time - Atmos%Time_init, seconds)
