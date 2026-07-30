@@ -33,7 +33,7 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
                                 update_atmos_model_dynamics,               &
                                 update_atmos_radiation_physics,            &
                                 update_atmos_model_state,                  &
-                                atmos_model_dump_state,
+                                atmos_model_dump_state,                    &
                                 atmos_data_type, atmos_model_restart,      &
                                 atmos_model_exchange_phase_1,              &
                                 atmos_model_exchange_phase_2,              &
