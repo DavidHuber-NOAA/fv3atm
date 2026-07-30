@@ -130,6 +130,7 @@ public update_atmos_model_dynamics
 public atmos_model_init, atmos_model_end, atmos_data_type
 public atmos_model_exchange_phase_1, atmos_model_exchange_phase_2
 public atmos_model_restart
+public atmos_model_dump_state
 public get_atmos_model_ungridded_dim
 public atmos_model_get_nth_domain_info
 public addLsmask2grid
@@ -1165,6 +1166,47 @@ subroutine atmos_model_restart(Atmos, timestamp)
        call write_ca_restart(timestamp)
     endif
 end subroutine atmos_model_restart
+! </SUBROUTINE>
+
+!#######################################################################
+! <SUBROUTINE NAME="atmos_model_dump_state">
+! <DESCRIPTION>
+!  Diagnostic helper that dumps the full atmospheric model state (dynamics
+!  core, physics, surface, stochastic and cellular-automata restarts) to
+!  RESTART/ using the DIRECT, SELF-CONTAINED FMS write path.
+!
+!  IMPORTANT: this routine must only be called from the RUN phase (i.e.
+!  from fcst_run_phase_1/2), never from component Initialize. It writes
+!  the restart files synchronously on the forecast PEs and does NOT use
+!  the write grid component, so it produces complete restart files
+!  regardless of the value of quilting_restart. The underlying routines
+!  (fv_io_write_restart, sfc_prop_restart_write, phys_restart_write) each
+!  open/register/write/close their own local FMS file objects, so this is
+!  independent of the write-component restart registration done at init.
+!
+!  'timestamp' is used verbatim as the RESTART filename prefix; pass a
+!  distinctive tag (e.g. 'ingest_'//date) so the diagnostic files do not
+!  collide with the model's own restart files.
+! </DESCRIPTION>
+subroutine atmos_model_dump_state(Atmos, timestamp)
+  use get_stochy_pattern_mod, only: write_stoch_restart_atm
+  use update_ca, only: write_ca_restart
+  type (atmos_data_type),   intent(inout) :: Atmos
+  character(len=*),  intent(in)           :: timestamp
+  character(len=32)                       :: stamp32
+
+    stamp32 = timestamp
+    call atmosphere_restart(trim(stamp32))
+    call fv3atm_restart_write (GFS_sfcprop, GFS_restart_var, Atm_block, &
+                               GFS_control, Atmos%domain, stamp32)
+    call write_stoch_restart_atm('RESTART/'//trim(stamp32)//'.atm_stoch.res.nc')
+    if (GFS_control%do_ca) then
+       call write_ca_restart(trim(stamp32))
+    endif
+    if (mpp_pe() == mpp_root_pe()) &
+       write(*,*)'atmos_model_dump_state: wrote diagnostic restart set RESTART/'//trim(stamp32)//'.*'
+
+end subroutine atmos_model_dump_state
 ! </SUBROUTINE>
 
 !#######################################################################

@@ -33,6 +33,7 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
                                 update_atmos_model_dynamics,               &
                                 update_atmos_radiation_physics,            &
                                 update_atmos_model_state,                  &
+                                atmos_model_dump_state,
                                 atmos_data_type, atmos_model_restart,      &
                                 atmos_model_exchange_phase_1,              &
                                 atmos_model_exchange_phase_2,              &
@@ -1351,6 +1352,20 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
       endif
 !
 !-----------------------------------------------------------------------
+!*** DIAGNOSTIC DUMP #1a: state after the initial ingest of all input
+!*** data (netCDF restarts/ICs + IAU init), captured on the FIRST step
+!*** BEFORE any dynamics/physics has been applied. For an IAU forecast
+!*** this is the model start (forecast hour -iau_offset). Written to
+!*** RESTART/ingest_<validtime>.* via the direct FMS path. This is done
+!*** in the RUN phase (not Initialize) so it is safe with quilting_restart.
+!-----------------------------------------------------------------------
+      if (n_atmsteps == 0) then
+        if (mype == 0) write(*,*)'fcst_run_phase_1: dumping initial ingested state (pre-integration)'
+        call atmos_model_dump_state(Atmos, 'ingest_'//date_to_string(Atmos%Time))
+        call write_diag_coupler_res(Atmos, 'ingest_'//date_to_string(Atmos%Time))
+      endif
+!
+!-----------------------------------------------------------------------
 ! *** call fcst integration subroutines
 
       call update_atmos_model_dynamics (Atmos)
@@ -1410,6 +1425,26 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
 
       call update_atmos_model_state (Atmos, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__, file=__FILE__)) return
+
+      !--- DIAGNOSTIC DUMPS in the RUN phase (safe with quilting_restart).
+      !--- In phase_2 Atmos%Time has already been advanced by
+      !--- update_atmos_model_state, so 'seconds' is the END-of-step
+      !--- elapsed integration time.
+      call get_time(Atmos%Time - Atmos%Time_init, seconds)
+      !--- DUMP after the FIRST time step (elapsed == one dynamics step)
+      if (seconds == dt_atmos) then
+        if (mype == 0) write(*,*)'fcst_run_phase_2: dumping restart after first time step, seconds=',seconds
+        call atmos_model_dump_state(Atmos, 'step1_'//date_to_string(Atmos%Time))
+        call write_diag_coupler_res(Atmos, 'step1_'//date_to_string(Atmos%Time))
+      endif
+      !--- DUMP #1b: post-IAU state at the analysis valid time (forecast
+      !--- hour 0), i.e. when elapsed integration time == iau_offset hours.
+      if (nint(Atmos%iau_offset*3600.) > 0 .and. seconds == nint(Atmos%iau_offset*3600.)) then
+        if (mype == 0) write(*,*)'fcst_run_phase_2: dumping post-IAU (fhr 0) state at seconds=',seconds
+        call atmos_model_dump_state(Atmos, 'postiau_'//date_to_string(Atmos%Time))
+        call write_diag_coupler_res(Atmos, 'postiau_'//date_to_string(Atmos%Time))
+      endif
+
 
       !--- intermediate restart
       call get_time(Atmos%Time - Atmos%Time_init, seconds)
@@ -1475,6 +1510,27 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
 !-----------------------------------------------------------------------
 !
    end subroutine fcst_run_phase_2
+!
+!-----------------------------------------------------------------------
+!
+   !> Write a coupler.res sidecar file for a diagnostic restart dump so the
+   !! dumped restart set is self-describing / reusable as a warm-start IC.
+   subroutine write_diag_coupler_res(Atmos, timestamp)
+      type(atmos_data_type), intent(in) :: Atmos
+      character(len=*),      intent(in) :: timestamp
+      integer :: unit, date(6)
+      if (mpp_pe() == mpp_root_pe()) then
+        call get_date (Atmos%Time, date(1), date(2), date(3), date(4), date(5), date(6))
+        open( newunit=unit, file='RESTART/'//trim(timestamp)//'.coupler.res' )
+        write( unit, '(i6,8x,a)' )calendar_type, &
+             '(Calendar: no_calendar=0, thirty_day_months=1, julian=2, gregorian=3, noleap=4)'
+        write( unit, '(6i6,8x,a)' )date_init, &
+             'Model start time:   year, month, day, hour, minute, second'
+        write( unit, '(6i6,8x,a)' )date, &
+             'Current model time: year, month, day, hour, minute, second'
+        close( unit )
+      endif
+   end subroutine write_diag_coupler_res
 !
 !-----------------------------------------------------------------------
 !#######################################################################
