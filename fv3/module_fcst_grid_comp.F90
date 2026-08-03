@@ -766,6 +766,20 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
     ! Set IAU offset time
     Atmos%iau_offset = iau_offset
 
+    !--- DIAGNOSTIC restart dumps for reproducibility debugging.
+    !--- Append extra times to the restart schedule 'frestart' so that the
+    !--- normal quilting write grid component writes complete restart sets:
+    !---   * after the FIRST dynamics time step        (t = dt_atmos)
+    !---   * at the analysis valid time / forecast hr 0 (t = iau_offset hours)
+    !--- 'frestart' is subsequently published as an ESMF attribute and read
+    !--- back by both this component (fcst_run_phase_2 staging) and the write
+    !--- grid component (disk flush), so both stay synchronized. This reuses
+    !--- the model's own restart path and is safe with quilting_restart=.true.
+    !--- NOTE: the pre-integration ("ingest", forecast hour -iau_offset) state
+    !--- is NOT written here because the write component never runs at t=0; it
+    !--- is exactly the staged INPUT/*.res*.nc files and can be compared there.
+    call add_diag_restart_times()
+
 !------ initialize component models ------
 
      call  atmos_model_init (Atmos, Time_init, Time, Time_step)
@@ -1229,6 +1243,47 @@ if (rc /= ESMF_SUCCESS) write(0,*) 'rc=',rc,__FILE__,__LINE__; if(ESMF_LogFoundE
 
     if (mype == 0) print *,'frestart=',frestart(1:min(10,size(frestart)))/3600
   end subroutine fcst_time_array_setup
+!
+!-----------------------------------------------------------------------
+!#######################################################################
+!-----------------------------------------------------------------------
+!
+  !> Append diagnostic restart-dump times to the module-level 'frestart'
+  !! schedule: after the first dynamics step (dt_atmos) and at the analysis
+  !! valid time / forecast hour 0 (iau_offset hours). Duplicates already in
+  !! frestart are skipped. Uses move_alloc (no LHS-realloc dependency).
+  subroutine add_diag_restart_times()
+    integer, allocatable :: ftmp(:)
+    integer :: extra(2), ne, i, n, nadd
+
+    ne = 1
+    extra(1) = dt_atmos                        ! after the first dynamics step
+    if (iau_offset > 0) then                   ! analysis valid time (fhr 0)
+      ne = 2
+      extra(2) = iau_offset*3600
+    endif
+
+    if (.not. allocated(frestart)) return
+
+    nadd = 0
+    do i = 1, ne
+      if (.not. ANY(frestart == extra(i))) nadd = nadd + 1
+    enddo
+    if (nadd == 0) return
+
+    n = size(frestart)
+    allocate(ftmp(n+nadd))
+    ftmp(1:n) = frestart
+    do i = 1, ne
+      if (.not. ANY(frestart == extra(i))) then
+        n = n + 1
+        ftmp(n) = extra(i)
+      endif
+    enddo
+    call move_alloc(ftmp, frestart)
+
+    if (mype == 0) write(*,*) 'add_diag_restart_times: diagnostic frestart (seconds) = ', frestart
+  end subroutine add_diag_restart_times
 !
 !-----------------------------------------------------------------------
 !#######################################################################
